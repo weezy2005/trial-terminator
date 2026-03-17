@@ -1,0 +1,34 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go build cache
+*.test
+*.out
+vendor/
+
+# Environment files — NEVER commit secrets
+.env
+*.env.local
+
+# Node
+node_modules/
+.next/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Evidence screenshots from Playwright (runtime artifacts)
+evidence/
+
+# Docker volumes
+postgres-data/
