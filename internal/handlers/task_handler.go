@@ -16,8 +16,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/wesil/trial-terminator/internal/models"
-	"github.com/wesil/trial-terminator/internal/repository"
+	"github.com/weezy2005/trial-terminator/internal/models"
+	"github.com/weezy2005/trial-terminator/internal/repository"
 )
 
 // TaskHandler holds the dependencies needed by task-related HTTP handlers.

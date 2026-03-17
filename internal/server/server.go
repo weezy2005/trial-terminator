@@ -15,8 +15,8 @@ import (
 	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/wesil/trial-terminator/internal/handlers"
-	"github.com/wesil/trial-terminator/internal/repository"
+	"github.com/weezy2005/trial-terminator/internal/handlers"
+	"github.com/weezy2005/trial-terminator/internal/repository"
 )
 
 // New constructs and returns a configured *http.Server.

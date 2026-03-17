@@ -1,4 +1,4 @@
-module github.com/wesil/trial-terminator
+module github.com/weezy2005/trial-terminator
 
 go 1.22
 

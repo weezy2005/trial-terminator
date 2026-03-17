@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	"github.com/wesil/trial-terminator/internal/db"
-	"github.com/wesil/trial-terminator/internal/server"
+	"github.com/weezy2005/trial-terminator/internal/db"
+	"github.com/weezy2005/trial-terminator/internal/server"
 )
 
 func main() {

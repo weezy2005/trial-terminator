@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/wesil/trial-terminator/internal/models"
+	"github.com/weezy2005/trial-terminator/internal/models"
 )
 
 // ErrDuplicateIdempotencyKey is returned when a task with the same
