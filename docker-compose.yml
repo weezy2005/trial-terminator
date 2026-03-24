@@ -85,6 +85,19 @@ services:
       api:
         condition: service_healthy
 
+  # ── Next.js Frontend ────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8080
+    depends_on:
+      api:
+        condition: service_healthy
+
   # ── Prometheus ───────────────────────────────────────────────────────────────
   prometheus:
     image: prom/prometheus:v2.51.0
