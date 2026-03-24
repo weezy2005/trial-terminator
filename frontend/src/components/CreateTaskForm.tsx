@@ -63,6 +63,8 @@ export function CreateTaskForm({ onTaskCreated }: Props) {
         >
           <option value="test">Test (always succeeds)</option>
           <option value="netflix">Netflix</option>
+          <option value="spotify">Spotify</option>
+          <option value="linkedin">LinkedIn Premium</option>
         </select>
       </div>
 
