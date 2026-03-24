@@ -15,8 +15,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/weezy2005/trial-terminator/internal/models"
+	"github.com/weezy2005/trial-terminator/internal/queue"
 	"github.com/weezy2005/trial-terminator/internal/repository"
 )
 
@@ -24,15 +26,16 @@ import (
 // Using a struct instead of package-level variables means dependencies are
 // explicit and injectable — critical for unit testing.
 type TaskHandler struct {
-	repo   repository.TaskRepository
-	logger *slog.Logger
+	repo     repository.TaskRepository
+	producer *queue.Producer
+	logger   *slog.Logger
 }
 
 // NewTaskHandler constructs a TaskHandler.
 // Note: we accept the interface (TaskRepository), not the concrete type.
 // This is how we achieve testability: in tests, pass a mock; in prod, pass the real repo.
-func NewTaskHandler(repo repository.TaskRepository, logger *slog.Logger) *TaskHandler {
-	return &TaskHandler{repo: repo, logger: logger}
+func NewTaskHandler(repo repository.TaskRepository, producer *queue.Producer, logger *slog.Logger) *TaskHandler {
+	return &TaskHandler{repo: repo, producer: producer, logger: logger}
 }
 
 // CreateTask handles POST /tasks
@@ -85,19 +88,32 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- Step 4: Respond ---
-	// Determine status code based on whether this was newly created.
-	// If the task's CreatedAt equals its UpdatedAt exactly, it's new.
-	// A more robust approach: the repo could return a boolean "wasCreated".
-	// We use 201 for new tasks and 200 for returned existing tasks.
-	// Since CreateTask returns the task either way, we check if the task
-	// was created in this exact request by comparing timestamps.
-	// A simpler heuristic: the repo sets attempts=0 only on insert,
-	// but the cleanest signal is to check if CreatedAt == UpdatedAt
-	// (the trigger hasn't fired yet on a brand new row).
+	// --- Step 4: Enqueue (only for newly created tasks) ---
+	// We detect a new task by checking CreatedAt == UpdatedAt.
+	// The updated_at trigger fires on any UPDATE — a brand new row has never
+	// been updated, so both timestamps are identical.
+	isNew := task.CreatedAt.Equal(task.UpdatedAt)
+	if isNew {
+		// Push the task ID to Redis so a worker picks it up.
+		// ARCHITECTURAL DECISION: Why enqueue AFTER the DB insert, not before?
+		// If we pushed to Redis first and then the DB insert failed, a worker
+		// would pick up a task ID that doesn't exist in the DB — a phantom task.
+		// Enqueuing after the DB insert means a worker always finds a real task.
+		// The trade-off: if the server crashes between insert and enqueue, the task
+		// is in Postgres (PENDING) but not in Redis. The requeue goroutine will
+		// catch it on the next scan and push it. No task is ever permanently lost.
+		if err := h.producer.Enqueue(r.Context(), task.ID); err != nil {
+			// Non-fatal: log it. The requeue goroutine is our safety net.
+			h.logger.Error("failed to enqueue task after creation",
+				"task_id", task.ID,
+				"error", err,
+			)
+		}
+	}
+
+	// --- Step 5: Respond ---
 	statusCode := http.StatusCreated
-	if task.CreatedAt != task.UpdatedAt {
-		// The updated_at trigger has fired at least once — this task existed before.
+	if !isNew {
 		statusCode = http.StatusOK
 	}
 
@@ -115,16 +131,15 @@ func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// We need a UUID, not a raw string — validate format upfront.
-	// This prevents SQL injection-style attacks (not that pgx is vulnerable,
-	// but fail early with a clear message rather than a cryptic DB error).
-	from, err := parseUUID(idStr)
+	// Validate UUID format upfront — fail with a clear message rather than
+	// letting a malformed string reach the DB layer.
+	id, err := parseUUID(idStr)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid task id format: must be a UUID")
 		return
 	}
 
-	task, err := h.repo.GetTaskByID(r.Context(), from)
+	task, err := h.repo.GetTaskByID(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			h.writeError(w, http.StatusNotFound, "task not found")
@@ -163,23 +178,14 @@ func validateCreateTaskRequest(req *models.CreateTaskRequest) error {
 	return nil
 }
 
-// parseUUID wraps uuid.Parse to avoid importing google/uuid in this package.
-// Keeping UUID parsing close to where it's used reduces coupling.
-func parseUUID(s string) (interface{ String() string }, error) {
-	// We import uuid indirectly via repository. For the handler,
-	// we just need to validate the format — pass the string directly to pgx.
-	// pgx handles UUID strings natively without explicit uuid.UUID conversion.
-	// This function exists purely to give a clean error message.
-	if len(s) != 36 {
-		return nil, errors.New("not a valid UUID")
+// parseUUID parses a UUID string, returning a clear error on bad format.
+func parseUUID(s string) (uuid.UUID, error) {
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return uuid.Nil, errors.New("not a valid UUID")
 	}
-	return uuidValidator(s), nil
+	return id, nil
 }
-
-// uuidValidator is a thin wrapper to satisfy the parseUUID return type.
-type uuidValidator string
-
-func (u uuidValidator) String() string { return string(u) }
 
 // writeJSON serializes v to JSON and writes it to the response.
 // All JSON responses in this API go through this function — consistency.
