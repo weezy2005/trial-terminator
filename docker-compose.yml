@@ -1,0 +1,129 @@
+services:
+
+  # ── Postgres ────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: trialterminator
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: trialterminator
+    volumes:
+      # Named volume: data survives container restarts.
+      # Without this, every `docker compose down` wipes your database.
+      - postgres-data:/var/lib/postgresql/data
+      # Mount migrations into the init directory.
+      # Postgres runs any .sql files here automatically on first startup.
+      - ./migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trialterminator"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Go API ──────────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: trialterminator
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: trialterminator
+      REDIS_ADDR: redis:6379
+      SERVER_PORT: 8080
+    # depends_on with condition: service_healthy means the API only starts
+    # AFTER postgres and redis pass their health checks. Without this,
+    # the API starts immediately, fails to connect, and crashes — even though
+    # postgres is just 2 seconds behind.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Node Worker ─────────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: trialterminator
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: trialterminator
+      REDIS_ADDR: redis:6379
+      EVIDENCE_PATH: /evidence
+      HEADLESS: "true"
+    volumes:
+      # Mount the evidence folder so screenshots persist on the host machine.
+      # You can open them directly from your OS without entering the container.
+      - ./evidence:/evidence
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # ── Prometheus ───────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      # Keep 15 days of metric data.
+      - "--storage.tsdb.retention.time=15d"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # ── Grafana ──────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.3.3
+    ports:
+      - "3001:3000"
+    environment:
+      # Default admin credentials — change in production.
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      # Disable login screen for local dev — open Grafana without a password prompt.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      # Provisioning files auto-configure datasources and dashboards on startup.
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      # Dashboard JSON files loaded by the provisioning provider.
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+      # Named volume so Grafana settings survive container restarts.
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+# Named volumes — managed by Docker, persist across container restarts.
+volumes:
+  postgres-data:
+  grafana-data:

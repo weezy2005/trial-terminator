@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/weezy2005/trial-terminator/internal/metrics"
 	"github.com/weezy2005/trial-terminator/internal/models"
 	"github.com/weezy2005/trial-terminator/internal/queue"
 	"github.com/weezy2005/trial-terminator/internal/repository"
@@ -88,11 +89,18 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- Step 4: Enqueue (only for newly created tasks) ---
+	// --- Step 4: Record metrics ---
+	// Only increment for genuinely new tasks — not idempotent replays.
+	isNew := task.CreatedAt.Equal(task.UpdatedAt)
+	if isNew {
+		metrics.TasksCreatedTotal.WithLabelValues(task.ServiceName).Inc()
+		metrics.TasksInProgress.Inc() // worker will Dec() when it finishes
+	}
+
+	// --- Step 5: Enqueue (only for newly created tasks) ---
 	// We detect a new task by checking CreatedAt == UpdatedAt.
 	// The updated_at trigger fires on any UPDATE — a brand new row has never
 	// been updated, so both timestamps are identical.
-	isNew := task.CreatedAt.Equal(task.UpdatedAt)
 	if isNew {
 		// Push the task ID to Redis so a worker picks it up.
 		// ARCHITECTURAL DECISION: Why enqueue AFTER the DB insert, not before?
