@@ -1,5 +1,6 @@
 // linkedin.js — Playwright automation for cancelling a LinkedIn Premium subscription.
 import { withBrowser, takeScreenshot } from './base.js';
+import { detectTrialEndDate } from './detect.js';
 
 export async function cancel(task) {
   return withBrowser(async (browser) => {
@@ -24,6 +25,17 @@ export async function cancel(task) {
       // --- Step 4: Navigate to Premium subscription management page ---
       await page.goto('https://www.linkedin.com/premium/manage-subscription/');
       await page.waitForLoadState('networkidle');
+
+      // --- Step 4b: Auto-detect trial end date (AI phase) ---
+      if (task.payload?.auto_schedule && !task.scheduled_for) {
+        const endDate = await detectTrialEndDate(page);
+        if (!endDate) {
+          return { success: false, error: 'Could not detect trial end date from LinkedIn billing page', page };
+        }
+        const cancelDate = new Date(endDate);
+        cancelDate.setUTCDate(cancelDate.getUTCDate() - 1);
+        return { scheduled: true, scheduledFor: cancelDate };
+      }
 
       // --- Step 5: Click "Cancel subscription" ---
       await page.locator('[data-test-id="cancel-subscription-button"]').click();

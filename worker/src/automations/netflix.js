@@ -5,6 +5,7 @@
 // exactly as production would look, with a simulated failure mode so we can
 // test the Dead Letter path without needing a real Netflix account.
 import { withBrowser, takeScreenshot } from './base.js';
+import { detectTrialEndDate } from './detect.js';
 
 // cancel is the main entry point called by the worker.
 // It receives the full task object from Postgres.
@@ -60,6 +61,17 @@ export async function cancel(task) {
       // --- Step 4: Navigate to account settings ---
       await page.goto('https://www.netflix.com/account');
       await page.waitForLoadState('networkidle');
+
+      // --- Step 4b: Auto-detect trial end date (AI phase) ---
+      if (task.payload?.auto_schedule && !task.scheduled_for) {
+        const endDate = await detectTrialEndDate(page);
+        if (!endDate) {
+          return { success: false, error: 'Could not detect trial end date from Netflix account page', page };
+        }
+        const cancelDate = new Date(endDate);
+        cancelDate.setUTCDate(cancelDate.getUTCDate() - 1);
+        return { scheduled: true, scheduledFor: cancelDate };
+      }
 
       // --- Step 5: Click "Cancel Membership" ---
       // The selector targets the cancel button by its data attribute.

@@ -1,5 +1,6 @@
 // spotify.js — Playwright automation for cancelling a Spotify Premium subscription.
 import { withBrowser, takeScreenshot } from './base.js';
+import { detectTrialEndDate } from './detect.js';
 
 export async function cancel(task) {
   return withBrowser(async (browser) => {
@@ -24,6 +25,22 @@ export async function cancel(task) {
       // --- Step 4: Navigate to account subscription page ---
       await page.goto('https://www.spotify.com/account/subscription/');
       await page.waitForLoadState('networkidle');
+
+      // --- Step 4b: Auto-detect trial end date (AI phase) ---
+      // If the user requested auto-scheduling and we haven't detected a date yet
+      // (scheduled_for is null), take a screenshot and ask Claude to read the date.
+      // We return { scheduled } so the worker stores the date and exits without cancelling.
+      // The scheduler will re-enqueue this task on the right day for the actual cancel.
+      if (task.payload?.auto_schedule && !task.scheduled_for) {
+        const endDate = await detectTrialEndDate(page);
+        if (!endDate) {
+          return { success: false, error: 'Could not detect trial end date from Spotify billing page', page };
+        }
+        // Schedule for 1 day before the end date so the user gets the full trial.
+        const cancelDate = new Date(endDate);
+        cancelDate.setUTCDate(cancelDate.getUTCDate() - 1);
+        return { scheduled: true, scheduledFor: cancelDate };
+      }
 
       // --- Step 5: Click "Cancel Premium" ---
       await page.locator('[data-testid="cancel-premium-button"]').click();
