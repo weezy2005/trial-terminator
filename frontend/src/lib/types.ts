@@ -20,6 +20,7 @@ export interface Task {
   payload?: Record<string, unknown>;
   error_message?: string;
   evidence_path?: string;
+  scheduled_for?: string;
   created_at: string;
   updated_at: string;
 }
@@ -29,4 +30,5 @@ export interface CreateTaskPayload {
   service_name: string;
   user_email: string;
   payload?: Record<string, unknown>;
+  scheduled_for?: string;
 }

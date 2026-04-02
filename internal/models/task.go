@@ -83,6 +83,11 @@ type Task struct {
 	// file captured when a Playwright automation fails (e.g., UI changed).
 	EvidencePath *string `db:"evidence_path"    json:"evidence_path,omitempty"`
 
+	// ScheduledFor is the time at which the task should be enqueued.
+	// nil = enqueue immediately (existing behaviour).
+	// A future time = hold until the scheduler goroutine picks it up.
+	ScheduledFor *time.Time `db:"scheduled_for" json:"scheduled_for,omitempty"`
+
 	// Timestamps
 	CreatedAt time.Time `db:"created_at"       json:"created_at"`
 	UpdatedAt time.Time `db:"updated_at"       json:"updated_at"`
@@ -111,4 +116,8 @@ type CreateTaskRequest struct {
 	// Payload is optional extra data. The API accepts it as raw JSON
 	// so we don't need to define a schema per service at this layer.
 	Payload map[string]interface{} `json:"payload,omitempty"`
+
+	// ScheduledFor is the time at which the task should run.
+	// nil = enqueue immediately. Future time = hold until scheduler fires.
+	ScheduledFor *time.Time `json:"scheduled_for,omitempty"`
 }

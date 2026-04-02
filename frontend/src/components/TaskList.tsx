@@ -62,6 +62,11 @@ export function TaskList({ tasks: initialTasks }: Props) {
 
           <div className="text-xs text-gray-500 space-y-1">
             <div>Email: {task.user_email}</div>
+            {task.scheduled_for && task.status === 'PENDING' && (
+              <div className="text-blue-600">
+                Scheduled for: {new Date(task.scheduled_for).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+              </div>
+            )}
             <div>Attempts: {task.attempts} / {task.max_attempts}</div>
             <div className="font-mono text-gray-400">ID: {task.id.slice(0, 8)}…</div>
           </div>

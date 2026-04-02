@@ -22,6 +22,8 @@ export function CreateTaskForm({ onTaskCreated }: Props) {
   const [serviceName, setServiceName] = useState('test');
   const [userEmail, setUserEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [scheduleDate, setScheduleDate] = useState('');
+  const [autoSchedule, setAutoSchedule] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,18 +33,25 @@ export function CreateTaskForm({ onTaskCreated }: Props) {
     setError(null);
 
     try {
+      // Convert the local date string (YYYY-MM-DD) to an ISO 8601 timestamp.
+      // We use the start of that day in UTC so the scheduler fires promptly.
+      const scheduledFor = scheduleDate ? new Date(scheduleDate).toISOString() : undefined;
+
       const task = await createTask({
         idempotency_key: idempotencyKey,
         service_name: serviceName,
         user_email: userEmail,
-        payload: password ? { password } : undefined,
+        payload: {
+          ...(password ? { password } : {}),
+          ...(autoSchedule ? { auto_schedule: true } : {}),
+        },
+        scheduled_for: scheduledFor,
       });
       onTaskCreated(task);
-      // Reset form fields but NOT the key — the parent component
-      // will show the new task. If they submit again, the key stays the same
-      // (idempotent replay) until they navigate away or refresh.
       setUserEmail('');
       setPassword('');
+      setScheduleDate('');
+      setAutoSchedule(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Request failed');
     } finally {
@@ -91,6 +100,46 @@ export function CreateTaskForm({ onTaskCreated }: Props) {
           placeholder="Account password"
           className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
+      </div>
+
+      <div className="space-y-2">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={autoSchedule}
+            onChange={(e) => {
+              setAutoSchedule(e.target.checked);
+              if (e.target.checked) setScheduleDate('');
+            }}
+            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          />
+          <span className="text-sm font-medium text-gray-700">
+            Auto-detect trial end date <span className="text-xs text-purple-600 font-normal">(AI powered)</span>
+          </span>
+        </label>
+        {autoSchedule ? (
+          <p className="text-xs text-purple-600 bg-purple-50 rounded px-3 py-2">
+            The app will log in, read your billing page, and automatically schedule the cancellation for the day before your trial ends — no date needed.
+          </p>
+        ) : (
+          <div>
+            <label className="block text-sm font-medium text-gray-600 mb-1">
+              Cancel on <span className="text-gray-400">(optional — leave blank to run now)</span>
+            </label>
+            <input
+              type="date"
+              value={scheduleDate}
+              min={new Date().toISOString().split('T')[0]}
+              onChange={(e) => setScheduleDate(e.target.value)}
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            {scheduleDate && (
+              <p className="text-xs text-blue-600 mt-1">
+                Will automatically cancel on {new Date(scheduleDate).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="text-xs text-gray-400">

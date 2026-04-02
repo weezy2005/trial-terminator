@@ -69,6 +69,26 @@ export async function updateTaskRetry(taskId, errorMessage) {
   );
 }
 
+// scheduleTask stores the detected trial end date and resets the task to PENDING.
+// The Go scheduler goroutine will enqueue it when scheduled_for arrives.
+//
+// ARCHITECTURAL DECISION: Why set status back to PENDING instead of a new "SCHEDULED" status?
+// PENDING already means "waiting to be processed". The scheduler already knows to only
+// enqueue tasks where scheduled_for <= NOW(). Adding a new status would require
+// changes to the Go API, the frontend badge colours, and the worker claim logic —
+// all for no additional correctness. PENDING + scheduled_for together are sufficient.
+export async function scheduleTask(taskId, scheduledFor) {
+  await pool.query(
+    `UPDATE tasks
+     SET  status        = 'PENDING',
+          scheduled_for = $2,
+          locked_at     = NULL,
+          locked_by     = NULL
+     WHERE id = $1`,
+    [taskId, scheduledFor]
+  );
+}
+
 // updateTaskDeadLetter moves a task to the Dead Letter state.
 // Called when attempts >= max_attempts. The evidencePath is the relative
 // path to the screenshot taken at the moment of failure.

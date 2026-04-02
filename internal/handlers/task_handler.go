@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -97,19 +98,12 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		metrics.TasksInProgress.Inc() // worker will Dec() when it finishes
 	}
 
-	// --- Step 5: Enqueue (only for newly created tasks) ---
-	// We detect a new task by checking CreatedAt == UpdatedAt.
-	// The updated_at trigger fires on any UPDATE — a brand new row has never
-	// been updated, so both timestamps are identical.
-	if isNew {
-		// Push the task ID to Redis so a worker picks it up.
-		// ARCHITECTURAL DECISION: Why enqueue AFTER the DB insert, not before?
-		// If we pushed to Redis first and then the DB insert failed, a worker
-		// would pick up a task ID that doesn't exist in the DB — a phantom task.
-		// Enqueuing after the DB insert means a worker always finds a real task.
-		// The trade-off: if the server crashes between insert and enqueue, the task
-		// is in Postgres (PENDING) but not in Redis. The requeue goroutine will
-		// catch it on the next scan and push it. No task is ever permanently lost.
+	// --- Step 5: Enqueue (only for new, non-scheduled tasks) ---
+	// Scheduled tasks (scheduled_for is in the future) are held in Postgres
+	// until the scheduler goroutine enqueues them at the right time.
+	// Immediate tasks are pushed to Redis right now so a worker picks them up.
+	isScheduledFuture := task.ScheduledFor != nil && task.ScheduledFor.After(time.Now())
+	if isNew && !isScheduledFuture {
 		if err := h.producer.Enqueue(r.Context(), task.ID); err != nil {
 			// Non-fatal: log it. The requeue goroutine is our safety net.
 			h.logger.Error("failed to enqueue task after creation",

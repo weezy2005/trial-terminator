@@ -8,6 +8,7 @@ import {
   updateTaskSuccess,
   updateTaskRetry,
   updateTaskDeadLetter,
+  scheduleTask,
   pool,
 } from './db.js';
 import { getAutomation } from './automations/index.js';
@@ -34,7 +35,18 @@ export async function start() {
   process.on('SIGINT', shutdown);
 
   // Connect to Redis explicitly (we set lazyConnect: true).
-  await redis.connect();
+  // Retry up to 10 times with a 2s delay — Docker networking can take a moment
+  // to fully route traffic even after the health check passes.
+  for (let attempt = 1; attempt <= 10; attempt++) {
+    try {
+      await redis.connect();
+      break;
+    } catch (err) {
+      if (attempt === 10) throw err;
+      console.log(`[worker] redis connect attempt ${attempt} failed, retrying in 2s...`);
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
   console.log('[worker] redis connected');
 
   // Run the main loop until shutdown is requested.
@@ -109,6 +121,15 @@ async function processTask(taskId) {
   }
 
   // --- Step 4: Handle the result ---
+
+  // Detection phase complete: Claude found the trial end date.
+  // Store it and let the scheduler enqueue the task when the time comes.
+  if (result.scheduled) {
+    await scheduleTask(taskId, result.scheduledFor);
+    console.log(`[worker] task ${taskId} auto-scheduled for ${result.scheduledFor.toISOString()}`);
+    return;
+  }
+
   if (result.success) {
     await updateTaskSuccess(taskId);
     console.log(`[worker] task ${taskId} completed successfully`);

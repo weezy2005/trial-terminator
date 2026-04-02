@@ -15,6 +15,22 @@ import (
 	"github.com/weezy2005/trial-terminator/internal/repository"
 )
 
+// corsMiddleware allows the Next.js frontend (localhost:3000) to call the API
+// (localhost:8080) from the browser. Without this, the browser blocks the
+// request before it even reaches the handler.
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func New(ctx context.Context, db *pgxpool.Pool, redisClient *redis.Client) *http.Server {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -26,6 +42,9 @@ func New(ctx context.Context, db *pgxpool.Pool, redisClient *redis.Client) *http
 
 	requeuer := queue.NewRequeuer(taskRepo, redisClient, logger)
 	requeuer.Start(ctx)
+
+	scheduler := queue.NewScheduler(taskRepo, redisClient, logger)
+	scheduler.Start(ctx)
 
 	mux := http.NewServeMux()
 
@@ -60,6 +79,6 @@ func New(ctx context.Context, db *pgxpool.Pool, redisClient *redis.Client) *http
 
 	return &http.Server{
 		Addr:    ":" + port,
-		Handler: mux,
+		Handler: corsMiddleware(mux),
 	}
 }

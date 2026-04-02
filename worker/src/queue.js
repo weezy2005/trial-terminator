@@ -13,8 +13,6 @@ export const redis = new IORedis({
   // Automatically reconnect with exponential backoff (100ms → 200ms → 400ms...).
   // Without this, a temporary Redis restart would kill the worker permanently.
   retryStrategy: (times) => Math.min(times * 100, 3000),
-  // Throw an error if a command times out — better than hanging forever.
-  commandTimeout: 5000,
   // Identify this connection in Redis CLIENT LIST for debugging.
   connectionName: 'trial-terminator-worker',
   lazyConnect: true, // Don't connect until .connect() is explicitly called.

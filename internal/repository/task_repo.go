@@ -54,6 +54,11 @@ type TaskRepository interface {
 
 	// RequeueTask resets a stale task back to PENDING so it can be re-picked.
 	RequeueTask(ctx context.Context, taskID uuid.UUID) error
+
+	// GetPendingScheduledTasks returns tasks that have a scheduled_for time
+	// that has now passed but have not yet been enqueued. The scheduler goroutine
+	// calls this every minute and pushes the results into Redis.
+	GetPendingScheduledTasks(ctx context.Context) ([]*models.Task, error)
 }
 
 // PostgresTaskRepo is the production implementation of TaskRepository.
@@ -111,12 +116,12 @@ func (r *PostgresTaskRepo) CreateTask(ctx context.Context, req *models.CreateTas
 	// means the application never has to worry about clock skew or default values
 	// being out of sync between app versions.
 	const insertSQL = `
-		INSERT INTO tasks (idempotency_key, service_name, user_email, payload)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO tasks (idempotency_key, service_name, user_email, payload, scheduled_for)
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (idempotency_key) DO NOTHING
 		RETURNING id, idempotency_key, service_name, user_email, status,
 		          attempts, max_attempts, payload, error_message, evidence_path,
-		          created_at, updated_at, locked_at, locked_by
+		          created_at, updated_at, locked_at, locked_by, scheduled_for
 	`
 
 	task := &models.Task{}
@@ -125,6 +130,7 @@ func (r *PostgresTaskRepo) CreateTask(ctx context.Context, req *models.CreateTas
 		req.ServiceName,
 		req.UserEmail,
 		payloadBytes,
+		req.ScheduledFor,
 	).Scan(
 		&task.ID,
 		&task.IdempotencyKey,
@@ -140,6 +146,7 @@ func (r *PostgresTaskRepo) CreateTask(ctx context.Context, req *models.CreateTas
 		&task.UpdatedAt,
 		&task.LockedAt,
 		&task.LockedBy,
+		&task.ScheduledFor,
 	)
 
 	// pgx.ErrNoRows is returned when ON CONFLICT DO NOTHING fires
@@ -171,7 +178,7 @@ func (r *PostgresTaskRepo) GetTaskByID(ctx context.Context, id uuid.UUID) (*mode
 	const query = `
 		SELECT id, idempotency_key, service_name, user_email, status,
 		       attempts, max_attempts, payload, error_message, evidence_path,
-		       created_at, updated_at, locked_at, locked_by
+		       created_at, updated_at, locked_at, locked_by, scheduled_for
 		FROM tasks
 		WHERE id = $1
 	`
@@ -192,6 +199,7 @@ func (r *PostgresTaskRepo) GetTaskByID(ctx context.Context, id uuid.UUID) (*mode
 		&task.UpdatedAt,
 		&task.LockedAt,
 		&task.LockedBy,
+		&task.ScheduledFor,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("repository: task not found: %w", pgx.ErrNoRows)
@@ -223,9 +231,10 @@ func (r *PostgresTaskRepo) ClaimTask(ctx context.Context, taskID uuid.UUID, work
 		       attempts  = attempts + 1
 		WHERE  id     = $1
 		AND    status = 'PENDING'
+		AND    (scheduled_for IS NULL OR scheduled_for <= NOW())
 		RETURNING id, idempotency_key, service_name, user_email, status,
 		          attempts, max_attempts, payload, error_message, evidence_path,
-		          created_at, updated_at, locked_at, locked_by
+		          created_at, updated_at, locked_at, locked_by, scheduled_for
 	`
 
 	task := &models.Task{}
@@ -234,6 +243,7 @@ func (r *PostgresTaskRepo) ClaimTask(ctx context.Context, taskID uuid.UUID, work
 		&task.Status, &task.Attempts, &task.MaxAttempts, &task.Payload,
 		&task.ErrorMessage, &task.EvidencePath,
 		&task.CreatedAt, &task.UpdatedAt, &task.LockedAt, &task.LockedBy,
+		&task.ScheduledFor,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Task was already claimed by another worker — this is normal, not an error.
@@ -277,7 +287,7 @@ func (r *PostgresTaskRepo) GetStaleInProgressTasks(ctx context.Context, threshol
 	const query = `
 		SELECT id, idempotency_key, service_name, user_email, status,
 		       attempts, max_attempts, payload, error_message, evidence_path,
-		       created_at, updated_at, locked_at, locked_by
+		       created_at, updated_at, locked_at, locked_by, scheduled_for
 		FROM   tasks
 		WHERE  status    = 'IN_PROGRESS'
 		AND    locked_at < NOW() - $1::interval
@@ -300,6 +310,7 @@ func (r *PostgresTaskRepo) GetStaleInProgressTasks(ctx context.Context, threshol
 			&task.Status, &task.Attempts, &task.MaxAttempts, &task.Payload,
 			&task.ErrorMessage, &task.EvidencePath,
 			&task.CreatedAt, &task.UpdatedAt, &task.LockedAt, &task.LockedBy,
+			&task.ScheduledFor,
 		); err != nil {
 			return nil, fmt.Errorf("repository: failed to scan stale task: %w", err)
 		}
@@ -333,7 +344,7 @@ func (r *PostgresTaskRepo) GetTaskByIdempotencyKey(ctx context.Context, key uuid
 	const query = `
 		SELECT id, idempotency_key, service_name, user_email, status,
 		       attempts, max_attempts, payload, error_message, evidence_path,
-		       created_at, updated_at, locked_at, locked_by
+		       created_at, updated_at, locked_at, locked_by, scheduled_for
 		FROM tasks
 		WHERE idempotency_key = $1
 	`
@@ -354,6 +365,7 @@ func (r *PostgresTaskRepo) GetTaskByIdempotencyKey(ctx context.Context, key uuid
 		&task.UpdatedAt,
 		&task.LockedAt,
 		&task.LockedBy,
+		&task.ScheduledFor,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("repository: task not found by idempotency key: %w", pgx.ErrNoRows)
@@ -363,4 +375,44 @@ func (r *PostgresTaskRepo) GetTaskByIdempotencyKey(ctx context.Context, key uuid
 	}
 
 	return task, nil
+}
+
+// GetPendingScheduledTasks returns all PENDING tasks whose scheduled_for time
+// has arrived (scheduled_for <= NOW()). The scheduler goroutine calls this every
+// minute and pushes the results into Redis so a worker picks them up.
+//
+// Tasks with scheduled_for IS NULL are excluded — those were already enqueued
+// immediately at creation time and don't need the scheduler.
+func (r *PostgresTaskRepo) GetPendingScheduledTasks(ctx context.Context) ([]*models.Task, error) {
+	const query = `
+		SELECT id, idempotency_key, service_name, user_email, status,
+		       attempts, max_attempts, payload, error_message, evidence_path,
+		       created_at, updated_at, locked_at, locked_by, scheduled_for
+		FROM   tasks
+		WHERE  status        = 'PENDING'
+		AND    scheduled_for IS NOT NULL
+		AND    scheduled_for <= NOW()
+	`
+
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("repository: failed to query scheduled tasks: %w", err)
+	}
+	defer rows.Close()
+
+	var tasks []*models.Task
+	for rows.Next() {
+		task := &models.Task{}
+		if err := rows.Scan(
+			&task.ID, &task.IdempotencyKey, &task.ServiceName, &task.UserEmail,
+			&task.Status, &task.Attempts, &task.MaxAttempts, &task.Payload,
+			&task.ErrorMessage, &task.EvidencePath,
+			&task.CreatedAt, &task.UpdatedAt, &task.LockedAt, &task.LockedBy,
+			&task.ScheduledFor,
+		); err != nil {
+			return nil, fmt.Errorf("repository: failed to scan scheduled task: %w", err)
+		}
+		tasks = append(tasks, task)
+	}
+	return tasks, rows.Err()
 }
