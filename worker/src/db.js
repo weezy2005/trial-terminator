@@ -23,9 +23,13 @@ pool.on('error', (err) => {
 
 // --- Task queries ---
 
-// claimTask atomically transitions a task from PENDING → IN_PROGRESS.
+// claimTask atomically transitions a task from PENDING/RETRY → IN_PROGRESS.
 // This is the same optimistic locking pattern as the Go ClaimTask method.
 // Only one worker wins when multiple workers race for the same task.
+//
+// Accepting both PENDING and RETRY means a task that failed on attempt 1
+// (status becomes RETRY via updateTaskRetry) can be re-claimed on attempt 2.
+// If we only accepted PENDING, retried tasks would be stuck forever.
 export async function claimTask(taskId, workerId) {
   const result = await pool.query(
     `UPDATE tasks
@@ -34,7 +38,7 @@ export async function claimTask(taskId, workerId) {
             locked_by = $2,
             attempts  = attempts + 1
      WHERE  id     = $1
-     AND    status = 'PENDING'
+     AND    status IN ('PENDING', 'RETRY')
      RETURNING *`,
     [taskId, workerId]
   );

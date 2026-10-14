@@ -6,19 +6,15 @@
 // "../../etc/passwd" and cause a path traversal. An explicit registry means
 // only the services we've intentionally registered can be executed.
 // This is the principle of allowlisting over denylisting.
-import { cancel as cancelNetflix } from './netflix.js';
-import { cancel as cancelSpotify } from './spotify.js';
-import { cancel as cancelLinkedIn } from './linkedin.js';
 import { cancel as cancelTestService } from './test-service.js';
+import { cancel as cancelUniversal } from './universal.js';
 
 // The registry maps service_name values (from the tasks table) to automation functions.
 // To add a new service, import its cancel function and add it here.
 // The worker.js loop doesn't need to change at all — open/closed principle.
 export const automations = {
-  netflix: cancelNetflix,
-  spotify: cancelSpotify,
-  linkedin: cancelLinkedIn,
   test: cancelTestService, // always succeeds — used by e2e happy-path tests
+  universal: cancelUniversal, // AI agent — works on any website via Gemini vision
 };
 
 // getAutomation returns the automation function for a given service name,

@@ -6,7 +6,7 @@
 # ARCHITECTURAL DECISION: Why not alpine for the worker like we used for Go?
 # Alpine uses musl libc. Chromium requires glibc. They're incompatible.
 # The Playwright image is Ubuntu-based (jammy = Ubuntu 22.04) — it works.
-FROM mcr.microsoft.com/playwright:v1.43.0-jammy
+FROM mcr.microsoft.com/playwright:v1.59.1-jammy
 
 WORKDIR /app
 

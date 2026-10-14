@@ -141,8 +141,15 @@ async function processTask(taskId) {
 
   // Take a screenshot of whatever the browser was showing when it failed.
   // This is the "evidence" for the Dead Letter Queue.
-  let screenshotPath = null;
-  if (result.page) {
+  //
+  // Automations that know the browser is already closed (e.g. universal.js,
+  // which runs inside withBrowser's lifecycle) pre-save evidence and return
+  // the path in result.evidencePath. We prefer that path when available.
+  // Falling back to re-screenshotting only works for automations that keep
+  // the page alive past the error — which is nobody right now, but we leave
+  // the fallback in for future automations that manage their own browser.
+  let screenshotPath = result.evidencePath ?? null;
+  if (!screenshotPath && result.page) {
     try {
       screenshotPath = await takeScreenshot(result.page, taskId);
     } catch (screenshotErr) {
