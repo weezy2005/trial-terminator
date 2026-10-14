@@ -11,8 +11,11 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -153,6 +156,61 @@ func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusOK, task)
+}
+
+// GetTaskScreenshot handles GET /tasks/{id}/screenshot
+//
+// Returns the most recent screenshot of the AI agent's browser view for a task.
+// Used by Watch Mode in the UI — the frontend polls this endpoint every ~1.5s
+// while a task is IN_PROGRESS so the user can watch the agent work.
+//
+// Reads evidence/{id}-latest.png from the shared evidence volume.
+// Returns 404 if the file doesn't exist yet (task hasn't taken a screenshot).
+//
+// Security note: id is validated as a UUID before being used in the file path,
+// so path-traversal attempts like "../etc/passwd" are rejected upstream.
+func (h *TaskHandler) GetTaskScreenshot(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	if _, err := parseUUID(idStr); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid task id format: must be a UUID")
+		return
+	}
+
+	evidenceDir := os.Getenv("EVIDENCE_PATH")
+	if evidenceDir == "" {
+		evidenceDir = "./evidence"
+	}
+
+	// filepath.Join is safe here because idStr has been validated as a UUID
+	// (only hex chars and dashes — no slashes or dots).
+	imagePath := filepath.Join(evidenceDir, idStr+"-latest.png")
+
+	// Tell browsers never to cache — Watch Mode polls this URL repeatedly and
+	// we always want the freshest frame.
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+
+	f, err := os.Open(imagePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Not an error — the task may not have taken a screenshot yet.
+			// The frontend treats 404 as "poll again later."
+			http.NotFound(w, r)
+			return
+		}
+		h.logger.Error("failed to open screenshot", "error", err, "path", imagePath)
+		h.writeError(w, http.StatusInternalServerError, "failed to read screenshot")
+		return
+	}
+	defer f.Close()
+
+	w.Header().Set("Content-Type", "image/png")
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(w, f); err != nil {
+		// Headers already sent; just log and move on.
+		h.logger.Error("failed to stream screenshot", "error", err)
+	}
 }
 
 // --- Helpers ---

@@ -54,6 +54,9 @@ func New(ctx context.Context, db *pgxpool.Pool, redisClient *redis.Client) *http
 	// it must be the PATTERN, not the actual URL, to avoid cardinality explosion.
 	mux.HandleFunc("POST /tasks", metrics.InstrumentHandler("POST /tasks", taskHandler.CreateTask))
 	mux.HandleFunc("GET /tasks/{id}", metrics.InstrumentHandler("GET /tasks/{id}", taskHandler.GetTask))
+	// Watch Mode — serves the live screenshot the AI agent is currently seeing.
+	// Polled by the frontend every ~1.5s while a task is IN_PROGRESS.
+	mux.HandleFunc("GET /tasks/{id}/screenshot", metrics.InstrumentHandler("GET /tasks/{id}/screenshot", taskHandler.GetTaskScreenshot))
 
 	// /metrics is the Prometheus scrape endpoint.
 	// promhttp.Handler() serves all registered metrics in the Prometheus text format.

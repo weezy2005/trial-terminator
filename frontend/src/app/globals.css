@@ -1,3 +1,22 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* The whole app sits on a very subtle warm-off-white instead of pure white,
+   which stops the big form cards from feeling clinical/overexposed. */
+body {
+  background: #fafaf9;
+}
+
+/* The brand gradient — reused by the primary CTA and the hero scissors icon.
+   Defined once as a utility so if we re-tune it, every surface updates. */
+.gradient-brand {
+  background-image: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+}
+
+.gradient-brand-text {
+  background-image: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}

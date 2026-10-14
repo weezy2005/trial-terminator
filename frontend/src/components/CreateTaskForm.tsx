@@ -18,12 +18,12 @@ interface Props {
 // both clicks send the same key — the second is a safe retry, not a duplicate.
 // This is the idempotency contract in action on the frontend.
 export function CreateTaskForm({ onTaskCreated }: Props) {
-  const [idempotencyKey] = useState(() => uuidv4());
-  const [serviceName, setServiceName] = useState('test');
+  const [idempotencyKey, setIdempotencyKey] = useState(() => uuidv4());
+  const [serviceName, setServiceName] = useState<'test' | 'universal'>('universal');
   const [userEmail, setUserEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [websiteUrl, setWebsiteUrl] = useState('');
   const [scheduleDate, setScheduleDate] = useState('');
-  const [autoSchedule, setAutoSchedule] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,8 +33,6 @@ export function CreateTaskForm({ onTaskCreated }: Props) {
     setError(null);
 
     try {
-      // Convert the local date string (YYYY-MM-DD) to an ISO 8601 timestamp.
-      // We use the start of that day in UTC so the scheduler fires promptly.
       const scheduledFor = scheduleDate ? new Date(scheduleDate).toISOString() : undefined;
 
       const task = await createTask({
@@ -43,15 +41,17 @@ export function CreateTaskForm({ onTaskCreated }: Props) {
         user_email: userEmail,
         payload: {
           ...(password ? { password } : {}),
-          ...(autoSchedule ? { auto_schedule: true } : {}),
+          ...(serviceName === 'universal' && websiteUrl ? { url: websiteUrl } : {}),
         },
         scheduled_for: scheduledFor,
       });
       onTaskCreated(task);
+      // Reset for the next submission.
       setUserEmail('');
       setPassword('');
+      setWebsiteUrl('');
       setScheduleDate('');
-      setAutoSchedule(false);
+      setIdempotencyKey(uuidv4());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Request failed');
     } finally {
@@ -60,94 +60,103 @@ export function CreateTaskForm({ onTaskCreated }: Props) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="bg-white rounded-lg border border-gray-200 p-6 space-y-4">
-      <h2 className="text-lg font-semibold text-gray-800">Cancel a Subscription</h2>
-
-      <div>
-        <label className="block text-sm font-medium text-gray-600 mb-1">Service</label>
-        <select
-          value={serviceName}
-          onChange={(e) => setServiceName(e.target.value)}
-          className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+    <form
+      onSubmit={handleSubmit}
+      className="bg-white rounded-2xl border border-gray-100 shadow-sm shadow-gray-900/5 p-6 space-y-5"
+    >
+      {/* Service tabs */}
+      <div className="flex gap-2 p-1 bg-gray-100 rounded-xl">
+        <button
+          type="button"
+          onClick={() => setServiceName('universal')}
+          className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition ${
+            serviceName === 'universal'
+              ? 'bg-white shadow-sm text-gray-900'
+              : 'text-gray-500 hover:text-gray-800'
+          }`}
         >
-          <option value="test">Test (always succeeds)</option>
-          <option value="netflix">Netflix</option>
-          <option value="spotify">Spotify</option>
-          <option value="linkedin">LinkedIn Premium</option>
-        </select>
+          AI Agent
+        </button>
+        <button
+          type="button"
+          onClick={() => setServiceName('test')}
+          className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition ${
+            serviceName === 'test'
+              ? 'bg-white shadow-sm text-gray-900'
+              : 'text-gray-500 hover:text-gray-800'
+          }`}
+        >
+          Test (always succeeds)
+        </button>
       </div>
 
-      <div>
-        <label className="block text-sm font-medium text-gray-600 mb-1">Email</label>
-        <input
-          type="email"
-          required
-          value={userEmail}
-          onChange={(e) => setUserEmail(e.target.value)}
-          placeholder="user@example.com"
-          className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium text-gray-600 mb-1">
-          Password <span className="text-gray-400">(optional)</span>
-        </label>
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="Account password"
-          className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-      </div>
-
-      <div className="space-y-2">
-        <label className="flex items-center gap-2 cursor-pointer">
+      {/* URL — only for AI agent */}
+      {serviceName === 'universal' && (
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+            Subscription URL
+          </label>
           <input
-            type="checkbox"
-            checked={autoSchedule}
-            onChange={(e) => {
-              setAutoSchedule(e.target.checked);
-              if (e.target.checked) setScheduleDate('');
-            }}
-            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            type="url"
+            required
+            value={websiteUrl}
+            onChange={(e) => setWebsiteUrl(e.target.value)}
+            placeholder="https://patreon.com or any login page"
+            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm placeholder:text-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition"
           />
-          <span className="text-sm font-medium text-gray-700">
-            Auto-detect trial end date <span className="text-xs text-purple-600 font-normal">(AI powered)</span>
-          </span>
+        </div>
+      )}
+
+      {/* Email + password row */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+            Email
+          </label>
+          <input
+            type="email"
+            required
+            value={userEmail}
+            onChange={(e) => setUserEmail(e.target.value)}
+            placeholder="you@example.com"
+            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm placeholder:text-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+            Password <span className="text-gray-300 font-normal normal-case">(optional)</span>
+          </label>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="••••••••"
+            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm placeholder:text-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition"
+          />
+        </div>
+      </div>
+
+      {/* Schedule date */}
+      <div>
+        <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+          Cancel on <span className="text-gray-300 font-normal normal-case">(optional — blank = run now)</span>
         </label>
-        {autoSchedule ? (
-          <p className="text-xs text-purple-600 bg-purple-50 rounded px-3 py-2">
-            The app will log in, read your billing page, and automatically schedule the cancellation for the day before your trial ends — no date needed.
+        <input
+          type="date"
+          value={scheduleDate}
+          min={new Date().toISOString().split('T')[0]}
+          onChange={(e) => setScheduleDate(e.target.value)}
+          className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm placeholder:text-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition"
+        />
+        {scheduleDate && (
+          <p className="text-xs text-indigo-600 mt-2">
+            Scheduled for {new Date(scheduleDate).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
           </p>
-        ) : (
-          <div>
-            <label className="block text-sm font-medium text-gray-600 mb-1">
-              Cancel on <span className="text-gray-400">(optional — leave blank to run now)</span>
-            </label>
-            <input
-              type="date"
-              value={scheduleDate}
-              min={new Date().toISOString().split('T')[0]}
-              onChange={(e) => setScheduleDate(e.target.value)}
-              className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            {scheduleDate && (
-              <p className="text-xs text-blue-600 mt-1">
-                Will automatically cancel on {new Date(scheduleDate).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-              </p>
-            )}
-          </div>
         )}
       </div>
 
-      <div className="text-xs text-gray-400">
-        Idempotency key: <span className="font-mono">{idempotencyKey.slice(0, 8)}…</span>
-      </div>
-
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded px-3 py-2">
+        <div className="bg-red-50 border border-red-100 text-red-700 text-sm rounded-xl px-4 py-3">
           {error}
         </div>
       )}
@@ -155,10 +164,14 @@ export function CreateTaskForm({ onTaskCreated }: Props) {
       <button
         type="submit"
         disabled={loading}
-        className="w-full bg-blue-600 text-white rounded px-4 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+        className="w-full gradient-brand text-white rounded-xl px-5 py-3 text-sm font-semibold shadow-lg shadow-indigo-500/25 hover:shadow-xl hover:shadow-indigo-500/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
       >
-        {loading ? 'Submitting…' : 'Cancel Subscription'}
+        {loading ? 'Submitting…' : 'Cancel subscription →'}
       </button>
+
+      <div className="text-[10px] text-gray-300 text-center font-mono">
+        key: {idempotencyKey.slice(0, 8)}…
+      </div>
     </form>
   );
 }
