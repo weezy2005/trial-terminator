@@ -53,7 +53,7 @@ type TaskRepository interface {
 	GetStaleInProgressTasks(ctx context.Context, threshold time.Duration) ([]*models.Task, error)
 
 	// RequeueTask resets a stale task back to PENDING so it can be re-picked.
-	RequeueTask(ctx context.Context, taskID uuid.UUID) error
+	RequeueTask(ctx context.Context, taskID uuid.UUID, threshold time.Duration) (bool, error)
 
 	// GetPendingScheduledTasks returns tasks that have a scheduled_for time
 	// that has now passed but have not yet been enqueued. The scheduler goroutine
@@ -322,20 +322,26 @@ func (r *PostgresTaskRepo) GetStaleInProgressTasks(ctx context.Context, threshol
 // RequeueTask resets a stale IN_PROGRESS task back to PENDING.
 // The requeue goroutine calls this, then pushes the task ID back to Redis.
 // We clear locked_at and locked_by so the task looks fresh to the next worker.
-func (r *PostgresTaskRepo) RequeueTask(ctx context.Context, taskID uuid.UUID) error {
+//
+// The staleness check is repeated here, not just in GetStaleInProgressTasks,
+// because a worker can heartbeat between the scan and this update. Without
+// the re-check we'd requeue a task whose worker just proved it was alive.
+// Returns false if the task was no longer stale (nothing was changed).
+func (r *PostgresTaskRepo) RequeueTask(ctx context.Context, taskID uuid.UUID, threshold time.Duration) (bool, error) {
 	const query = `
 		UPDATE tasks
 		SET  status    = 'PENDING',
 		     locked_at = NULL,
 		     locked_by = NULL
-		WHERE id     = $1
-		AND   status = 'IN_PROGRESS'
+		WHERE id        = $1
+		AND   status    = 'IN_PROGRESS'
+		AND   locked_at < NOW() - $2::interval
 	`
-	_, err := r.db.Exec(ctx, query, taskID)
+	tag, err := r.db.Exec(ctx, query, taskID, threshold.String())
 	if err != nil {
-		return fmt.Errorf("repository: failed to requeue task: %w", err)
+		return false, fmt.Errorf("repository: failed to requeue task: %w", err)
 	}
-	return nil
+	return tag.RowsAffected() > 0, nil
 }
 
 // GetTaskByIdempotencyKey retrieves an existing task by its idempotency key.

@@ -9,6 +9,7 @@ import {
   updateTaskRetry,
   updateTaskDeadLetter,
   scheduleTask,
+  heartbeat,
   pool,
 } from './db.js';
 import { getAutomation } from './automations/index.js';
@@ -19,6 +20,12 @@ import { config } from './config.js';
 // This ID is stored in locked_by so we can trace which worker held a task.
 // Using a UUID means IDs are unique even across multiple worker machines.
 const WORKER_ID = `worker-${uuidv4()}`;
+
+// How often a running task refreshes its locked_at timestamp.
+// The Go requeuer treats a task as abandoned after 30s without a heartbeat,
+// so 10s gives us room for two missed beats (e.g. a slow DB round trip)
+// before a live worker could be mistaken for a dead one.
+const HEARTBEAT_INTERVAL_MS = 10_000;
 
 // isShuttingDown is set to true when SIGTERM/SIGINT is received.
 // The main loop checks this flag to exit cleanly after finishing the current task.
@@ -106,11 +113,24 @@ async function processTask(taskId) {
     // Move it to DEAD_LETTER immediately — retrying won't help.
     const error = `No automation found for service: ${task.service_name}`;
     console.error(`[worker] ${error}`);
-    await updateTaskDeadLetter(taskId, error, null);
+    await updateTaskDeadLetter(taskId, WORKER_ID, error, null);
     return;
   }
 
   // --- Step 3: Run the automation ---
+  // Heartbeat while the automation runs. An AI agent run can take minutes
+  // (up to 20 steps plus Gemini backoff), so a fixed timeout on locked_at
+  // alone would requeue tasks that are still alive.
+  const beat = setInterval(() => {
+    heartbeat(taskId, WORKER_ID)
+      .then((stillOwned) => {
+        if (!stillOwned) {
+          console.warn(`[worker] lost ownership of task ${taskId}, result will be discarded`);
+        }
+      })
+      .catch((err) => console.warn(`[worker] heartbeat failed for ${taskId}: ${err.message}`));
+  }, HEARTBEAT_INTERVAL_MS);
+
   let result;
   try {
     result = await automation(task);
@@ -118,20 +138,30 @@ async function processTask(taskId) {
     // This catches errors the automation itself didn't handle — true crashes.
     // Treat as a failure.
     result = { success: false, error: unexpectedErr.message, page: null };
+  } finally {
+    clearInterval(beat);
   }
 
   // --- Step 4: Handle the result ---
 
-  // Detection phase complete: Claude found the trial end date.
+  // Every write below is fenced on WORKER_ID. If it returns false, the
+  // requeuer gave this task to another worker while we were running, and
+  // that worker now owns the result. We log and drop ours.
+
+  // Detection phase complete: the trial end date was found.
   // Store it and let the scheduler enqueue the task when the time comes.
   if (result.scheduled) {
-    await scheduleTask(taskId, result.scheduledFor);
+    if (!(await scheduleTask(taskId, WORKER_ID, result.scheduledFor))) {
+      return logLostOwnership(taskId);
+    }
     console.log(`[worker] task ${taskId} auto-scheduled for ${result.scheduledFor.toISOString()}`);
     return;
   }
 
   if (result.success) {
-    await updateTaskSuccess(taskId);
+    if (!(await updateTaskSuccess(taskId, WORKER_ID))) {
+      return logLostOwnership(taskId);
+    }
     console.log(`[worker] task ${taskId} completed successfully`);
     return;
   }
@@ -168,11 +198,16 @@ async function processTask(taskId) {
     // exactly what the UI looked like when it failed. Without this, debugging
     // production failures is guesswork.
     console.error(`[worker] task ${taskId} exhausted all ${task.max_attempts} attempts → DEAD_LETTER`);
-    await updateTaskDeadLetter(taskId, result.error, screenshotPath);
+    if (!(await updateTaskDeadLetter(taskId, WORKER_ID, result.error, screenshotPath))) {
+      return logLostOwnership(taskId);
+    }
   } else {
     // Retries remain → re-queue.
     console.log(`[worker] task ${taskId} will retry (${task.attempts}/${task.max_attempts} attempts used)`);
-    await updateTaskRetry(taskId, result.error);
+    if (!(await updateTaskRetry(taskId, WORKER_ID, result.error))) {
+      // Don't push to Redis — the new owner is handling this task.
+      return logLostOwnership(taskId);
+    }
 
     // Push the task back onto the Redis queue for immediate retry.
     // ARCHITECTURAL DECISION: Why push back immediately instead of waiting
@@ -183,6 +218,12 @@ async function processTask(taskId) {
     await redis.lpush(QUEUE_KEY, taskId);
     console.log(`[worker] task ${taskId} re-queued for retry`);
   }
+}
+
+// logLostOwnership records a result that was discarded because another
+// worker took over the task after this one missed its heartbeats.
+function logLostOwnership(taskId) {
+  console.warn(`[worker] task ${taskId} was reassigned to another worker, discarding result`);
 }
 
 // shutdown sets the flag that causes the main loop to exit after the current task.

@@ -46,31 +46,57 @@ export async function claimTask(taskId, workerId) {
   return result.rows[0] ?? null;
 }
 
+// heartbeat refreshes locked_at while a task is running so the Go requeuer
+// can tell a slow-but-alive worker apart from a dead one. Guarded by
+// locked_by so a worker can't keep a task alive after losing ownership.
+export async function heartbeat(taskId, workerId) {
+  const result = await pool.query(
+    `UPDATE tasks
+     SET    locked_at = NOW()
+     WHERE  id        = $1
+     AND    locked_by = $2
+     AND    status    = 'IN_PROGRESS'`,
+    [taskId, workerId]
+  );
+  return result.rowCount > 0;
+}
+
+// --- Result writes ---
+//
+// Every result write below is fenced on locked_by. If this worker was declared
+// dead and the task was handed to another worker, the WHERE clause matches
+// zero rows and the stale result is discarded instead of overwriting the
+// new owner's state. Each function returns true if the write landed.
+
 // updateTaskSuccess marks a task as successfully completed.
-export async function updateTaskSuccess(taskId) {
-  await pool.query(
+export async function updateTaskSuccess(taskId, workerId) {
+  const result = await pool.query(
     `UPDATE tasks
      SET  status    = 'SUCCESS',
           locked_at = NULL,
           locked_by = NULL
-     WHERE id = $1`,
-    [taskId]
+     WHERE id = $1
+     AND   locked_by = $2`,
+    [taskId, workerId]
   );
+  return result.rowCount > 0;
 }
 
 // updateTaskRetry increments the failure count and marks for retry.
 // The Go requeue goroutine will NOT pick this up (it only watches IN_PROGRESS).
 // We push the task back to Redis ourselves immediately after calling this.
-export async function updateTaskRetry(taskId, errorMessage) {
-  await pool.query(
+export async function updateTaskRetry(taskId, workerId, errorMessage) {
+  const result = await pool.query(
     `UPDATE tasks
      SET  status        = 'RETRY',
-          error_message = $2,
+          error_message = $3,
           locked_at     = NULL,
           locked_by     = NULL
-     WHERE id = $1`,
-    [taskId, errorMessage]
+     WHERE id = $1
+     AND   locked_by = $2`,
+    [taskId, workerId, errorMessage]
   );
+  return result.rowCount > 0;
 }
 
 // scheduleTask stores the detected trial end date and resets the task to PENDING.
@@ -81,32 +107,36 @@ export async function updateTaskRetry(taskId, errorMessage) {
 // enqueue tasks where scheduled_for <= NOW(). Adding a new status would require
 // changes to the Go API, the frontend badge colours, and the worker claim logic —
 // all for no additional correctness. PENDING + scheduled_for together are sufficient.
-export async function scheduleTask(taskId, scheduledFor) {
-  await pool.query(
+export async function scheduleTask(taskId, workerId, scheduledFor) {
+  const result = await pool.query(
     `UPDATE tasks
      SET  status        = 'PENDING',
-          scheduled_for = $2,
+          scheduled_for = $3,
           locked_at     = NULL,
           locked_by     = NULL
-     WHERE id = $1`,
-    [taskId, scheduledFor]
+     WHERE id = $1
+     AND   locked_by = $2`,
+    [taskId, workerId, scheduledFor]
   );
+  return result.rowCount > 0;
 }
 
 // updateTaskDeadLetter moves a task to the Dead Letter state.
 // Called when attempts >= max_attempts. The evidencePath is the relative
 // path to the screenshot taken at the moment of failure.
-export async function updateTaskDeadLetter(taskId, errorMessage, evidencePath) {
-  await pool.query(
+export async function updateTaskDeadLetter(taskId, workerId, errorMessage, evidencePath) {
+  const result = await pool.query(
     `UPDATE tasks
      SET  status         = 'DEAD_LETTER',
-          error_message  = $2,
-          evidence_path  = $3,
+          error_message  = $3,
+          evidence_path  = $4,
           locked_at      = NULL,
           locked_by      = NULL
-     WHERE id = $1`,
-    [taskId, errorMessage, evidencePath]
+     WHERE id = $1
+     AND   locked_by = $2`,
+    [taskId, workerId, errorMessage, evidencePath]
   );
+  return result.rowCount > 0;
 }
 
 export { pool };

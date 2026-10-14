@@ -13,15 +13,17 @@ const (
 	// staleLockThreshold is how long a task can stay IN_PROGRESS with no update
 	// before we declare the worker dead and reclaim the task.
 	//
-	// ARCHITECTURAL DECISION: Why 2 minutes?
-	// The worker (Sprint 3) will update locked_at every 30 seconds while running.
-	// 2 minutes = 4 missed heartbeats. This is conservative enough to avoid
-	// false positives (a slow-but-alive worker) while still recovering quickly
-	// from real crashes. In production, tune this based on your p99 task duration.
-	staleLockThreshold = 2 * time.Minute
+	// ARCHITECTURAL DECISION: Why 30 seconds?
+	// The worker heartbeats (refreshes locked_at) every 10 seconds while running.
+	// 30 seconds = 3 missed heartbeats. One missed beat can be a slow query;
+	// three in a row means the worker is almost certainly gone. Because this is
+	// based on heartbeats, not total runtime, long AI agent runs are never
+	// mistaken for crashes no matter how many minutes they take.
+	staleLockThreshold = 30 * time.Second
 
 	// requeueInterval is how often the requeue goroutine wakes up and scans for stale tasks.
-	requeueInterval = 30 * time.Second
+	// Worst-case recovery after a crash = threshold + interval = 40 seconds.
+	requeueInterval = 10 * time.Second
 )
 
 // Requeuer is the background goroutine that implements the heartbeat safety net.
@@ -107,13 +109,19 @@ func (r *Requeuer) runOnce(ctx context.Context) {
 
 	for _, task := range staleTasks {
 		// Step 1: Reset the task to PENDING in Postgres.
-		if err := r.repo.RequeueTask(ctx, task.ID); err != nil {
+		requeued, err := r.repo.RequeueTask(ctx, task.ID, staleLockThreshold)
+		if err != nil {
 			r.logger.Error("requeue: failed to reset task",
 				"task_id", task.ID,
 				"worker", task.LockedBy,
 				"error", err,
 			)
 			continue // Don't push to Redis if the DB update failed — would create a ghost task.
+		}
+		if !requeued {
+			// The worker heartbeated (or finished) between our scan and this
+			// update. It's alive — leave the task alone.
+			continue
 		}
 
 		// Step 2: Push the task ID back onto the Redis queue.
