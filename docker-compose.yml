@@ -48,6 +48,11 @@ services:
       POSTGRES_DB: trialterminator
       REDIS_ADDR: redis:6379
       SERVER_PORT: 8080
+      # Serves the live screenshot for Watch Mode (GET /tasks/{id}/screenshot).
+      # Same mount as the worker so both services see the same files.
+      EVIDENCE_PATH: /evidence
+    volumes:
+      - ./evidence:/evidence
     # depends_on with condition: service_healthy means the API only starts
     # AFTER postgres and redis pass their health checks. Without this,
     # the API starts immediately, fails to connect, and crashes — even though
@@ -62,6 +67,18 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # ── Mock Subscription Site ──────────────────────────────────────────────────
+  # A tiny fake SaaS for demoing the AI agent end-to-end without hitting real
+  # sites. Guaranteed-success target: login → dashboard → billing → cancel.
+  # Exposed on host port 3002 so you can also browse it manually to see what
+  # the agent sees. Workers reach it via Docker DNS at http://mock-subscription:3002
+  mock-subscription:
+    build:
+      context: ./mock-subscription
+      dockerfile: Dockerfile
+    ports:
+      - "3002:3002"
 
   # ── Node Worker ─────────────────────────────────────────────────────────────
   worker:
@@ -86,6 +103,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+      mock-subscription:
+        condition: service_started
 
   # ── Next.js Frontend ────────────────────────────────────────────────────────
   frontend:

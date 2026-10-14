@@ -1,0 +1,13 @@
+{
+  "name": "mock-subscription",
+  "version": "1.0.0",
+  "description": "Fake SaaS used by the TrialTerminator agent for a guaranteed-success demo flow.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.6",
+    "express": "^4.19.2"
+  }
+}
