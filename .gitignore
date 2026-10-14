@@ -32,3 +32,6 @@ evidence/
 
 # Docker volumes
 postgres-data/
+
+# Local editor/assistant settings
+.claude/
