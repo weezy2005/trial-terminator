@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# A newer push to the same branch makes the older run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go-unit:
+    name: Go · lint & unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./... && go vet -tags=integration ./...
+
+      # -race matters here: the requeuer and scheduler are goroutines sharing
+      # the repo and producer with the HTTP handlers.
+      - name: Unit tests
+        run: go test -race -count=1 ./...
+
+  go-integration:
+    name: Go · Postgres integration tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: tt
+          POSTGRES_PASSWORD: tt
+          POSTGRES_DB: tt
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tt"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 15
+    env:
+      TEST_DATABASE_URL: postgres://tt:tt@localhost:5432/tt?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Integration tests
+        run: go test -race -count=1 -tags=integration ./internal/repository/...
+
+  node:
+    name: Node · frontend build & worker checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: worker/.nvmrc
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            worker/package-lock.json
+            mock-subscription/package-lock.json
+
+      - name: Frontend · install
+        working-directory: frontend
+        run: npm ci
+      - name: Frontend · typecheck
+        working-directory: frontend
+        run: npx tsc --noEmit
+      - name: Frontend · build
+        working-directory: frontend
+        run: npm run build
+
+      # The worker has no unit tests yet; installing and parsing every module
+      # still catches broken imports and syntax errors before they reach Docker.
+      - name: Worker · install & syntax check
+        working-directory: worker
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+        run: |
+          npm ci
+          find src -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Mock site · install & syntax check
+        working-directory: mock-subscription
+        run: |
+          npm ci
+          node --check src/index.js
+
+  docker:
+    name: Docker · build all images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: docker compose build
