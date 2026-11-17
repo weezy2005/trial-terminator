@@ -12,8 +12,8 @@ WORKDIR /app
 
 # Install Node dependencies before copying source code — same layer caching
 # strategy as the Go Dockerfile. package.json changes rarely; src/ changes often.
-COPY package.json ./
-RUN npm install --omit=dev
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 
 # Copy source code.
 COPY src/ ./src/

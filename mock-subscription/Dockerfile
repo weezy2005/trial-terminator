@@ -4,8 +4,8 @@ FROM node:20-alpine
 WORKDIR /app
 
 # Dependencies first — Docker caches this layer so src/ changes rebuild fast.
-COPY package.json ./
-RUN npm install --omit=dev
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 
 COPY src/ ./src/
 
