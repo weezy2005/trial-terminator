@@ -112,7 +112,9 @@ TEST_DATABASE_URL=postgres://user:pass@localhost:5432/db?sslmode=disable \
   go test -tags=integration ./internal/repository/...
 
 # End-to-end against the running compose stack
-API_URL=http://localhost:8081 node tests/e2e/happy-path.mjs
+export API_URL=http://localhost:8081
+node tests/e2e/happy-path.mjs     # create → claim → SUCCESS, plus idempotent replay
+node tests/e2e/failure-path.mjs   # CAPTCHA wall → 3 attempts → DEAD_LETTER with screenshot
 ```
 
 CI runs gofmt, vet, unit tests with `-race`, integration tests against a Postgres service container, a frontend typecheck and build, and a build of every Docker image.
