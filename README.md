@@ -106,10 +106,10 @@ To see the agent work end to end, pick **AI agent** in the dashboard, set the UR
 # Go unit tests: handlers, requeuer, scheduler (no external services)
 go test ./...
 
-# Go integration tests: idempotency, claim races, requeue/heartbeat SQL
+# Go integration tests: idempotency, claim races, requeue/heartbeat SQL, migrations
 # against a real Postgres. Each test gets its own schema, so they run in parallel.
 TEST_DATABASE_URL=postgres://user:pass@localhost:5432/db?sslmode=disable \
-  go test -tags=integration ./internal/repository/...
+  go test -tags=integration ./internal/...
 
 # End-to-end against the running compose stack
 export API_URL=http://localhost:8081
@@ -137,7 +137,7 @@ internal/handlers/    HTTP layer (thin: parse, validate, call repo, respond)
 internal/repository/  All SQL lives here
 internal/queue/       Redis producer, requeuer, scheduler
 internal/metrics/     Every Prometheus metric in one place
-migrations/           Schema, applied by Postgres on first start
+migrations/           Schema, embedded in the API binary and applied at startup
 worker/               Node worker and Gemini vision agent
 mock-subscription/    Fake SaaS with a retention dark pattern, for safe demos
 frontend/             Next.js dashboard

@@ -14,6 +14,7 @@ import (
 	"github.com/weezy2005/trial-terminator/internal/db"
 	"github.com/weezy2005/trial-terminator/internal/queue"
 	"github.com/weezy2005/trial-terminator/internal/server"
+	"github.com/weezy2005/trial-terminator/migrations"
 )
 
 func main() {
@@ -35,6 +36,15 @@ func main() {
 	}
 	defer pool.Close()
 	logger.Info("database connection established")
+
+	// Apply pending migrations before serving traffic, so no handler ever
+	// runs against a schema older than the code expects.
+	applied, err := db.Migrate(ctx, pool, migrations.FS)
+	if err != nil {
+		logger.Error("failed to apply migrations", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("schema up to date", "applied", applied)
 
 	logger.Info("connecting to redis...")
 	redisClient, err := queue.NewRedisClient(ctx)

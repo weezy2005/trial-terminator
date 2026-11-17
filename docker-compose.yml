@@ -11,9 +11,9 @@ services:
       # Named volume: data survives container restarts.
       # Without this, every `docker compose down` wipes your database.
       - postgres-data:/var/lib/postgresql/data
-      # Mount migrations into the init directory.
-      # Postgres runs any .sql files here automatically on first startup.
-      - ./migrations:/docker-entrypoint-initdb.d
+      # No init-directory migrations: the API applies migrations/ at startup
+      # (internal/db/migrate.go), which also works for existing volumes and
+      # managed databases.
     ports:
       - "5432:5432"
     healthcheck:

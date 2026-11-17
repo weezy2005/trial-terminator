@@ -59,7 +59,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Integration tests
-        run: go test -race -count=1 -tags=integration ./internal/repository/...
+        run: go test -race -count=1 -tags=integration ./internal/...
 
   node:
     name: Node · frontend build & worker checks

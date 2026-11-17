@@ -7,15 +7,12 @@
 // Run with:
 //
 //	TEST_DATABASE_URL=postgres://user:pass@localhost:5432/db?sslmode=disable \
-//	  go test -tags=integration ./internal/repository/...
+//	  go test -tags=integration ./internal/...
 package repository
 
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
-	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -23,58 +20,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/weezy2005/trial-terminator/internal/models"
+	"github.com/weezy2005/trial-terminator/internal/pgtest"
 )
 
-// newTestRepo gives each test its own schema with the migrations applied, so
-// tests can run in parallel against one database without seeing each other's rows.
+// newTestRepo gives each test its own schema, migrated by the same runner
+// the API uses at startup.
 func newTestRepo(t *testing.T) (*PostgresTaskRepo, *pgxpool.Pool) {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set")
-	}
-	ctx := context.Background()
-
-	schema := "test_" + uuid.NewString()[:8]
-	admin, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = admin.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
-		admin.Close()
-	})
-
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.ConnConfig.RuntimeParams["search_path"] = schema
-	cfg.MaxConns = 25 // enough for the concurrency tests to actually race
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-
-	files, err := filepath.Glob("../../migrations/*.sql")
-	if err != nil || len(files) == 0 {
-		t.Fatalf("no migrations found: %v", err)
-	}
-	sort.Strings(files)
-	for _, f := range files {
-		sql, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := pool.Exec(ctx, string(sql)); err != nil {
-			t.Fatalf("migration %s: %v", filepath.Base(f), err)
-		}
-	}
-
+	pool := pgtest.MigratedPool(t)
 	return NewPostgresTaskRepo(pool), pool
 }
 
