@@ -51,6 +51,14 @@ services:
       # Serves the live screenshot for Watch Mode (GET /tasks/{id}/screenshot).
       # Same mount as the worker so both services see the same files.
       EVIDENCE_PATH: /evidence
+      # Auth (docs/design/001). Browsers see the API on host port 8081, so
+      # that's the URL Google redirects back to. DEV_LOGIN lets you sign in
+      # as any email locally; leave GOOGLE_* empty to use only that.
+      PUBLIC_API_URL: http://localhost:8081
+      FRONTEND_URL: http://localhost:3000
+      DEV_LOGIN: "true"
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     volumes:
       - ./evidence:/evidence
     # depends_on with condition: service_healthy means the API only starts

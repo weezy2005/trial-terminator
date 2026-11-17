@@ -5,33 +5,19 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
+	"github.com/weezy2005/trial-terminator/internal/auth"
 	"github.com/weezy2005/trial-terminator/internal/handlers"
 	"github.com/weezy2005/trial-terminator/internal/metrics"
 	"github.com/weezy2005/trial-terminator/internal/queue"
 	"github.com/weezy2005/trial-terminator/internal/repository"
 )
 
-// corsMiddleware allows the Next.js frontend (localhost:3000) to call the API
-// (localhost:8080) from the browser. Without this, the browser blocks the
-// request before it even reaches the handler.
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func New(ctx context.Context, db *pgxpool.Pool, redisClient *redis.Client) *http.Server {
+func New(ctx context.Context, db *pgxpool.Pool, redisClient *redis.Client, authCfg auth.Config) *http.Server {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
@@ -47,6 +33,9 @@ func New(ctx context.Context, db *pgxpool.Pool, redisClient *redis.Client) *http
 	scheduler.Start(ctx)
 
 	mux := http.NewServeMux()
+
+	authHandler := auth.NewHandler(authCfg, auth.NewStore(db), logger)
+	authHandler.Register(mux, metrics.InstrumentHandler)
 
 	// Wrap each route with InstrumentHandler so every request records its
 	// latency and status code as a Prometheus histogram observation.
@@ -82,6 +71,10 @@ func New(ctx context.Context, db *pgxpool.Pool, redisClient *redis.Client) *http
 
 	return &http.Server{
 		Addr:    ":" + port,
-		Handler: corsMiddleware(mux),
+		Handler: corsMiddleware(authCfg.AllowedOrigins, mux),
+		// Bounds how long a client may take to send headers, so slow-drip
+		// connections (slowloris) can't pin goroutines. No WriteTimeout:
+		// the worker claim endpoint will long-poll for up to 25s by design.
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 }

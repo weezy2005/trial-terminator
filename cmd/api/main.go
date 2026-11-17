@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/weezy2005/trial-terminator/internal/auth"
 	"github.com/weezy2005/trial-terminator/internal/db"
 	"github.com/weezy2005/trial-terminator/internal/queue"
 	"github.com/weezy2005/trial-terminator/internal/server"
@@ -21,6 +22,19 @@ func main() {
 	_ = godotenv.Load()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	// Validate config before touching any dependency: a bad config should
+	// fail in milliseconds with a clear message, not after connection retries.
+	authCfg, err := auth.ConfigFromEnv()
+	if err != nil {
+		logger.Error("invalid auth configuration", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("auth configured",
+		"google", authCfg.GoogleEnabled(),
+		"dev_login", authCfg.DevLogin,
+		"allowed_origins", authCfg.AllowedOrigins,
+	)
 
 	// The root context is cancelled when a shutdown signal arrives.
 	// We pass this context to server.New() so the requeue goroutine
@@ -55,7 +69,7 @@ func main() {
 	defer redisClient.Close()
 	logger.Info("redis connection established")
 
-	srv := server.New(ctx, pool, redisClient)
+	srv := server.New(ctx, pool, redisClient, authCfg)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
