@@ -101,7 +101,8 @@ func (r *statusRecorder) WriteHeader(code int) {
 // InstrumentHandler wraps an HTTP handler and records its latency + status code.
 //
 // Usage in server.go:
-//   mux.HandleFunc("POST /tasks", metrics.InstrumentHandler("POST /tasks", handler.CreateTask))
+//
+//	mux.HandleFunc("POST /tasks", metrics.InstrumentHandler("POST /tasks", handler.CreateTask))
 //
 // The path label uses the PATTERN string (e.g. "GET /tasks/{id}"), not the actual
 // URL (e.g. "GET /tasks/abc-123"). This is critical — using actual URLs would create
