@@ -28,12 +28,14 @@ var ErrDuplicateIdempotencyKey = errors.New("task with this idempotency key alre
 // ARCHITECTURAL DECISION: Why define an interface in the repository package?
 // Go interfaces are satisfied implicitly — any type with the right methods
 // automatically satisfies the interface. Defining it here lets us:
-// 1. Pass *PostgresTaskRepo in production code
-// 2. Pass a hand-written mock in unit tests (Sprint 5)
-// 3. Express clearly what the handler actually needs from storage
-//    (Liskov Substitution Principle in practice)
+//  1. Pass *PostgresTaskRepo in production code
+//  2. Pass a hand-written mock in unit tests (Sprint 5)
+//  3. Express clearly what the handler actually needs from storage
+//     (Liskov Substitution Principle in practice)
 type TaskRepository interface {
-	CreateTask(ctx context.Context, req *models.CreateTaskRequest) (*models.Task, error)
+	// CreateTask returns created=false when the idempotency key already existed
+	// and the returned task is the original, not a new row.
+	CreateTask(ctx context.Context, req *models.CreateTaskRequest) (task *models.Task, created bool, err error)
 	GetTaskByID(ctx context.Context, id uuid.UUID) (*models.Task, error)
 	GetTaskByIdempotencyKey(ctx context.Context, key uuid.UUID) (*models.Task, error)
 
@@ -87,17 +89,21 @@ func NewPostgresTaskRepo(db *pgxpool.Pool) *PostgresTaskRepo {
 // - 1 row affected → new task was created → return it
 // - 0 rows affected → a task with this key already existed → look it up and return it
 //
+// The created flag tells the caller which of the two happened. Callers must use
+// it rather than comparing timestamps: an untouched replayed task still has
+// created_at == updated_at, which would make a replay look brand new.
+//
 // This two-step approach (insert, then check) is safe under concurrent load.
 // Even if two goroutines race to insert the same key simultaneously,
 // the database UNIQUE constraint is the final arbiter — exactly one will win,
 // the other will hit ON CONFLICT and return 0 rows. No duplicate tasks possible.
-func (r *PostgresTaskRepo) CreateTask(ctx context.Context, req *models.CreateTaskRequest) (*models.Task, error) {
+func (r *PostgresTaskRepo) CreateTask(ctx context.Context, req *models.CreateTaskRequest) (*models.Task, bool, error) {
 	// Parse the idempotency key from the request string into a UUID type.
 	// We do this validation here (in the repo) rather than the handler
 	// because the DB constraint is on a UUID column — pgx needs a uuid.UUID, not a string.
 	idempotencyKey, err := uuid.Parse(req.IdempotencyKey)
 	if err != nil {
-		return nil, fmt.Errorf("repository: invalid idempotency_key format: %w", err)
+		return nil, false, fmt.Errorf("repository: invalid idempotency_key format: %w", err)
 	}
 
 	// Serialize the payload map to JSON bytes for the JSONB column.
@@ -106,7 +112,7 @@ func (r *PostgresTaskRepo) CreateTask(ctx context.Context, req *models.CreateTas
 	if len(req.Payload) > 0 {
 		payloadBytes, err = json.Marshal(req.Payload)
 		if err != nil {
-			return nil, fmt.Errorf("repository: failed to marshal payload: %w", err)
+			return nil, false, fmt.Errorf("repository: failed to marshal payload: %w", err)
 		}
 	}
 
@@ -154,7 +160,8 @@ func (r *PostgresTaskRepo) CreateTask(ctx context.Context, req *models.CreateTas
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Fetch and return the existing task — the caller gets a consistent response
 		// whether this is the first request or the 100th retry.
-		return r.GetTaskByIdempotencyKey(ctx, idempotencyKey)
+		existing, err := r.GetTaskByIdempotencyKey(ctx, idempotencyKey)
+		return existing, false, err
 	}
 
 	if err != nil {
@@ -165,12 +172,13 @@ func (r *PostgresTaskRepo) CreateTask(ctx context.Context, req *models.CreateTas
 		// In practice this is rare with ON CONFLICT, but being defensive is correct.
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return r.GetTaskByIdempotencyKey(ctx, idempotencyKey)
+			existing, err := r.GetTaskByIdempotencyKey(ctx, idempotencyKey)
+			return existing, false, err
 		}
-		return nil, fmt.Errorf("repository: failed to insert task: %w", err)
+		return nil, false, fmt.Errorf("repository: failed to insert task: %w", err)
 	}
 
-	return task, nil
+	return task, true, nil
 }
 
 // GetTaskByID retrieves a task by its internal UUID primary key.

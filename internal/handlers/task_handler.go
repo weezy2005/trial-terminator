@@ -1,8 +1,8 @@
 // Package handlers contains HTTP request handlers.
 // Handlers are responsible for:
-//   1. Parsing and validating the incoming HTTP request
-//   2. Calling the appropriate repository/service method
-//   3. Writing the HTTP response
+//  1. Parsing and validating the incoming HTTP request
+//  2. Calling the appropriate repository/service method
+//  3. Writing the HTTP response
 //
 // Handlers do NOT contain business logic. They are a translation layer
 // between HTTP and your domain. This keeps them thin and easy to test.
@@ -75,7 +75,7 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Step 3: Create (or fetch existing) ---
-	task, err := h.repo.CreateTask(r.Context(), &req)
+	task, isNew, err := h.repo.CreateTask(r.Context(), &req)
 	if err != nil {
 		// If the task was not found after the duplicate key path,
 		// something is genuinely wrong — log it and return 500.
@@ -95,7 +95,6 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 
 	// --- Step 4: Record metrics ---
 	// Only increment for genuinely new tasks — not idempotent replays.
-	isNew := task.CreatedAt.Equal(task.UpdatedAt)
 	if isNew {
 		metrics.TasksCreatedTotal.WithLabelValues(task.ServiceName).Inc()
 		metrics.TasksInProgress.Inc() // worker will Dec() when it finishes
