@@ -268,6 +268,24 @@ app.get('/logout', (req, res) => {
   res.redirect('/');
 });
 
+// Guaranteed-failure target for the dead-letter e2e test.
+// Carries the same markers real CAPTCHA walls do (a g-recaptcha div with a
+// data-sitekey, "verify you're human" copy), so the agent's human-wall check
+// fires on the first step of every attempt. No real CAPTCHA script is loaded;
+// the markup alone is what the agent looks for, and Gemini is never called.
+app.get('/challenge', (req, res) => {
+  res.send(page('Security check', `
+    <div class="card">
+      <h1>Security check</h1>
+      <p class="lead">Please verify you're human before signing in.</p>
+      <div class="g-recaptcha plan" data-sitekey="mock-site-key" style="text-align:center;">
+        ☐ I'm not a robot
+      </div>
+      <button type="button" class="btn btn-primary" disabled>Continue</button>
+    </div>
+  `));
+});
+
 // Tiny HTML escape — we interpolate the user's email into the page.
 // Even in a mock, treat untrusted input correctly so the demo doesn't accidentally
 // teach bad habits to anyone reading the code.
