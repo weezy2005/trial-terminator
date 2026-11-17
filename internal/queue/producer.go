@@ -8,6 +8,13 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// Enqueuer is the one thing the rest of the app needs from the queue.
+// Handlers, the requeuer and the scheduler depend on this interface instead of
+// *Producer so their tests can swap in an in-memory fake and run without Redis.
+type Enqueuer interface {
+	Enqueue(ctx context.Context, taskID uuid.UUID) error
+}
+
 // Producer publishes task IDs to the Redis queue for workers to consume.
 //
 // ARCHITECTURAL DECISION: Why publish only the task ID, not the full task?
@@ -34,12 +41,12 @@ func NewProducer(client *redis.Client) *Producer {
 // order they were created, which is the fairest default behavior.
 //
 // Why not Redis Streams or Pub/Sub?
-// - Pub/Sub: fire-and-forget. If no worker is listening, the message is lost.
-// - Streams: more powerful (consumer groups, message acknowledgement) but
-//   adds complexity. We get equivalent reliability from our Postgres heartbeat
-//   pattern — the requeue goroutine is our acknowledgement safety net.
-// - LIST + BRPOP: simple, battle-tested, sufficient for our needs.
-//   Upgrade to Streams in a future sprint if throughput demands it.
+//   - Pub/Sub: fire-and-forget. If no worker is listening, the message is lost.
+//   - Streams: more powerful (consumer groups, message acknowledgement) but
+//     adds complexity. We get equivalent reliability from our Postgres heartbeat
+//     pattern — the requeue goroutine is our acknowledgement safety net.
+//   - LIST + BRPOP: simple, battle-tested, sufficient for our needs.
+//     Upgrade to Streams in a future sprint if throughput demands it.
 func (p *Producer) Enqueue(ctx context.Context, taskID uuid.UUID) error {
 	// LPUSH pushes the task ID string to the HEAD of the list.
 	// The value is the UUID as a string — workers parse it back to uuid.UUID.

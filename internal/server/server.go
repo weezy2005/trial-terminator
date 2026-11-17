@@ -40,10 +40,10 @@ func New(ctx context.Context, db *pgxpool.Pool, redisClient *redis.Client) *http
 	producer := queue.NewProducer(redisClient)
 	taskHandler := handlers.NewTaskHandler(taskRepo, producer, logger)
 
-	requeuer := queue.NewRequeuer(taskRepo, redisClient, logger)
+	requeuer := queue.NewRequeuer(taskRepo, producer, logger)
 	requeuer.Start(ctx)
 
-	scheduler := queue.NewScheduler(taskRepo, redisClient, logger)
+	scheduler := queue.NewScheduler(taskRepo, producer, logger)
 	scheduler.Start(ctx)
 
 	mux := http.NewServeMux()

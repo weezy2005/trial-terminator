@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/weezy2005/trial-terminator/internal/repository"
 )
 
@@ -22,15 +21,15 @@ const schedulerInterval = 1 * time.Minute
 // the granularity users care about is hours/days, not seconds.
 type Scheduler struct {
 	repo     repository.TaskRepository
-	producer *Producer
+	producer Enqueuer
 	logger   *slog.Logger
 }
 
 // NewScheduler constructs a Scheduler.
-func NewScheduler(repo repository.TaskRepository, client *redis.Client, logger *slog.Logger) *Scheduler {
+func NewScheduler(repo repository.TaskRepository, producer Enqueuer, logger *slog.Logger) *Scheduler {
 	return &Scheduler{
 		repo:     repo,
-		producer: NewProducer(client),
+		producer: producer,
 		logger:   logger,
 	}
 }

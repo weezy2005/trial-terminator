@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/weezy2005/trial-terminator/internal/repository"
 )
 
@@ -31,15 +30,15 @@ const (
 // whose workers have died, resetting them to PENDING so they can be retried.
 type Requeuer struct {
 	repo     repository.TaskRepository
-	producer *Producer
+	producer Enqueuer
 	logger   *slog.Logger
 }
 
 // NewRequeuer constructs a Requeuer.
-func NewRequeuer(repo repository.TaskRepository, client *redis.Client, logger *slog.Logger) *Requeuer {
+func NewRequeuer(repo repository.TaskRepository, producer Enqueuer, logger *slog.Logger) *Requeuer {
 	return &Requeuer{
 		repo:     repo,
-		producer: NewProducer(client),
+		producer: producer,
 		logger:   logger,
 	}
 }

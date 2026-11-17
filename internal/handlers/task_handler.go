@@ -32,14 +32,14 @@ import (
 // explicit and injectable — critical for unit testing.
 type TaskHandler struct {
 	repo     repository.TaskRepository
-	producer *queue.Producer
+	producer queue.Enqueuer
 	logger   *slog.Logger
 }
 
 // NewTaskHandler constructs a TaskHandler.
 // Note: we accept the interface (TaskRepository), not the concrete type.
 // This is how we achieve testability: in tests, pass a mock; in prod, pass the real repo.
-func NewTaskHandler(repo repository.TaskRepository, producer *queue.Producer, logger *slog.Logger) *TaskHandler {
+func NewTaskHandler(repo repository.TaskRepository, producer queue.Enqueuer, logger *slog.Logger) *TaskHandler {
 	return &TaskHandler{repo: repo, producer: producer, logger: logger}
 }
 
